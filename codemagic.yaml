@@ -1,5 +1,5 @@
 # MedFleet Flutter — Codemagic CI/CD
-# Bundle ID: net.medfleet.medfleet
+# Bundle ID: net.medfleet.rep
 
 workflows:
   ios-ipa:
@@ -18,7 +18,7 @@ workflows:
         - ios_signing
       ios_signing:
         distribution_type: app_store
-        bundle_identifier: net.medfleet.medfleet
+        bundle_identifier: net.medfleet.rep
 
     triggering:
       events:
@@ -36,7 +36,7 @@ workflows:
         script: |
           set -e
           keychain initialize
-          app-store-connect fetch-signing-files "net.medfleet.medfleet" \
+          app-store-connect fetch-signing-files "net.medfleet.rep" \
             --type IOS_APP_STORE \
             --create
           keychain add-certificates
