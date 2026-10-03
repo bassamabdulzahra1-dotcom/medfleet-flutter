@@ -41,8 +41,10 @@ workflows:
 
       - name: Build IPA
         script: |
+          IOS_BUILD=$(( ${BUILD_NUMBER:-1} + 20 ))
           flutter build ipa --release \
-            --build-number=${BUILD_NUMBER:-1} \
+            --build-name=1.2.0 \
+            --build-number=$IOS_BUILD \
             --export-options-plist=$HOME/export_options.plist
 
     artifacts:

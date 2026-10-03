@@ -1,7 +1,7 @@
 name: medfleet
 description: MedFleet - pharmacy staff app (inventory, invoice scan, stock count, purchase returns).
 publish_to: "none"
-version: 1.0.0+1
+version: 1.2.0+20
 
 environment:
   sdk: ^3.11.0
