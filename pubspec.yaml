@@ -1,0 +1,45 @@
+name: medfleet
+description: MedFleet - pharmacy staff app (inventory, invoice scan, stock count, purchase returns).
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.2.1
+  flutter_svg: ^2.0.10+1
+  intl: any
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.1
+  flutter_native_splash: ^2.4.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon/
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/icon/app_icon_1024.png
+  remove_alpha_ios: true
+  adaptive_icon_background: assets/icon/adaptive_background.png
+  adaptive_icon_foreground: assets/icon/adaptive_foreground.png
+  adaptive_icon_monochrome: assets/icon/adaptive_monochrome.png
+
+flutter_native_splash:
+  color: "#0A4F3E"
+  image: assets/icon/splash_logo.png
+  android_12:
+    color: "#0A4F3E"
+    image: assets/icon/splash_logo.png
