@@ -1,5 +1,5 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../core/format.dart';
 import '../core/icons.dart';
 import '../core/tokens.dart';
@@ -7,11 +7,7 @@ import '../data/models.dart';
 import '../data/repository.dart';
 import '../widgets/common.dart';
 
-/// Invoice scanner.
-///
-/// The camera view is a simulation. To use the real camera add the
-/// `mobile_scanner` package, replace [_Viewfinder]'s child with a
-/// `MobileScanner(onDetect: ...)` and call [_onCode] with the decoded value.
+/// Invoice scanner — camera/gallery preview then commit to MedFleet.
 class ScanScreen extends StatefulWidget {
   final VoidCallback onBack;
   const ScanScreen({super.key, required this.onBack});
@@ -19,56 +15,120 @@ class ScanScreen extends StatefulWidget {
   State<ScanScreen> createState() => _ScanScreenState();
 }
 
-enum _Phase { scanning, found, confirmed }
+enum _Phase { idle, reading, found, confirmed }
 
 class _ScanScreenState extends State<ScanScreen> with SingleTickerProviderStateMixin {
   late final AnimationController _beam =
       AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat(reverse: true);
-  _Phase _phase = _Phase.scanning;
+  _Phase _phase = _Phase.idle;
   ScannedInvoice? _inv;
   bool _confirming = false;
-  Timer? _sim;
+  List<ScannedInvoice> _recent = [];
 
   @override
   void initState() {
     super.initState();
-    _sim = Timer(const Duration(milliseconds: 2400), () => _onCode('INV-13147'));
+    _loadRecent();
   }
 
-  void _start() {
-    _sim?.cancel();
+  Future<void> _loadRecent() async {
+    try {
+      final list = await repo.recentScans();
+      if (mounted) setState(() => _recent = list);
+    } catch (_) {}
+  }
+
+  void _reset() {
     setState(() {
-      _phase = _Phase.scanning;
+      _phase = _Phase.idle;
       _inv = null;
       _confirming = false;
     });
-    // Simulated decode after 2.4s. TODO(camera): remove, call _onCode from the scanner.
-    _sim = Timer(const Duration(milliseconds: 2400), () => _onCode('INV-13147'));
   }
 
-  Future<void> _onCode(String code) async {
-    final inv = await repo.readInvoice(code);
-    if (!mounted) return;
-    setState(() {
-      _inv = inv;
-      _phase = _Phase.found;
-    });
+  Future<void> _pick(ImageSource source) async {
+    try {
+      final shot = await ImagePicker().pickImage(source: source, imageQuality: 85, maxWidth: 2000);
+      if (shot == null) return;
+      setState(() {
+        _phase = _Phase.reading;
+        _inv = null;
+      });
+      final bytes = await shot.readAsBytes();
+      final inv = await repo.previewInvoicePhoto(bytes);
+      if (!mounted) return;
+      setState(() {
+        _inv = inv;
+        _phase = _Phase.found;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _phase = _Phase.idle);
+      showMfToast(context, e.toString());
+    }
+  }
+
+  Future<void> _manual() async {
+    final code = await showMfSheet<String>(
+      context,
+      (c) {
+        final t = TextEditingController();
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text('رقم الفاتورة', style: kufi(19, c: context.mf.ink)),
+          const SizedBox(height: 12),
+          TextField(
+            controller: t,
+            autofocus: true,
+            textDirection: TextDirection.ltr,
+            onSubmitted: (v) => Navigator.pop(c, v.trim()),
+            decoration: const InputDecoration(hintText: 'INV-…'),
+          ),
+          const SizedBox(height: 14),
+          PrimaryButton('بحث', onTap: () => Navigator.pop(c, t.text.trim())),
+        ]);
+      },
+    );
+    if (code == null || code.isEmpty) return;
+    setState(() => _phase = _Phase.reading);
+    try {
+      final inv = await repo.findScan(code);
+      if (!mounted) return;
+      if (inv == null) {
+        setState(() => _phase = _Phase.idle);
+        showMfToast(context, 'ما لقيت هالفاتورة بالمسح');
+        return;
+      }
+      setState(() {
+        _inv = inv;
+        _phase = _Phase.found;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _phase = _Phase.idle);
+      showMfToast(context, e.toString());
+    }
   }
 
   Future<void> _confirm() async {
     setState(() => _confirming = true);
-    await repo.confirmInvoice(_inv!.no);
-    if (!mounted) return;
-    setState(() {
-      _confirming = false;
-      _phase = _Phase.confirmed;
-    });
-    showMfToast(context, 'أُضيفت الفاتورة للمخزن');
+    try {
+      await repo.confirmInvoice(_inv!);
+      if (!mounted) return;
+      setState(() {
+        _confirming = false;
+        _phase = _Phase.confirmed;
+      });
+      showMfToast(context, _inv!.alreadyOnServer ? 'الفاتورة موجودة بالمسح' : 'أُضيفت الفاتورة للمخزن');
+      _loadRecent();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _confirming = false);
+      showMfToast(context, e.toString());
+    }
   }
 
   @override
   void dispose() {
-    _sim?.cancel();
     _beam.dispose();
     super.dispose();
   }
@@ -76,7 +136,7 @@ class _ScanScreenState extends State<ScanScreen> with SingleTickerProviderStateM
   @override
   Widget build(BuildContext context) {
     final p = context.mf;
-    final done = _phase != _Phase.scanning;
+    final done = _phase == _Phase.found || _phase == _Phase.confirmed;
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 120),
       children: [
@@ -84,10 +144,36 @@ class _ScanScreenState extends State<ScanScreen> with SingleTickerProviderStateM
         const SizedBox(height: 18),
         _Viewfinder(beam: _beam, found: done),
         const SizedBox(height: 18),
-        if (_phase == _Phase.scanning) ...[
-          Center(child: Text('وجّه الكاميرا نحو الباركود أو QR على الفاتورة', style: sans(13, c: p.mute))),
+        if (_phase == _Phase.reading)
+          const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()))
+        else if (_phase == _Phase.idle) ...[
+          Center(child: Text('صوّر الفاتورة حتى تُقرأ وتدخل للمخزن', style: sans(13, c: p.mute))),
           const SizedBox(height: 14),
-          PrimaryButton('إدخال الرقم يدوياً', ghost: true, onTap: () => showMfToast(context, 'إدخال الرقم يدوياً · قيد التصميم')),
+          PrimaryButton('التقط صورة الفاتورة', icon: 'scan', onTap: () => _pick(ImageSource.camera)),
+          const SizedBox(height: 10),
+          PrimaryButton('اختيار من المعرض', ghost: true, onTap: () => _pick(ImageSource.gallery)),
+          const SizedBox(height: 10),
+          PrimaryButton('إدخال الرقم يدوياً', ghost: true, onTap: _manual),
+          if (_recent.isNotEmpty) ...[
+            const SizedBox(height: 22),
+            Text('آخر المسوحات', style: sans(12, c: p.mute)),
+            const SizedBox(height: 8),
+            for (final s in _recent.take(6))
+              InkWell(
+                onTap: () => setState(() {
+                  _inv = s;
+                  _phase = _Phase.found;
+                }),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  decoration: BoxDecoration(border: Border(bottom: BorderSide(color: p.line))),
+                  child: Row(children: [
+                    Expanded(child: Text('${s.no} · ${s.supplier}', style: sans(13, c: p.ink))),
+                    Text(fmtNum(s.total), style: mono(13, c: p.mute)),
+                  ]),
+                ),
+              ),
+          ],
         ] else ...[
           Container(
             padding: const EdgeInsets.all(16),
@@ -115,12 +201,17 @@ class _ScanScreenState extends State<ScanScreen> with SingleTickerProviderStateM
           ),
           const SizedBox(height: 14),
           if (_phase == _Phase.found)
-            PrimaryButton('تأكيد وإدخال للمخزن', icon: 'box', loading: _confirming, onTap: _confirm)
+            PrimaryButton(
+              _inv!.alreadyOnServer ? 'عرض فقط — موجودة مسبقاً' : 'تأكيد وإدخال للمخزن',
+              icon: 'box',
+              loading: _confirming,
+              onTap: _confirm,
+            )
           else
-            PrimaryButton('مسح فاتورة أخرى', icon: 'scan', onTap: _start),
+            PrimaryButton('مسح فاتورة أخرى', icon: 'scan', onTap: _reset),
           if (_phase == _Phase.found) ...[
             const SizedBox(height: 10),
-            PrimaryButton('إعادة المسح', ghost: true, onTap: _start),
+            PrimaryButton('إعادة المسح', ghost: true, onTap: _reset),
           ],
         ],
       ],

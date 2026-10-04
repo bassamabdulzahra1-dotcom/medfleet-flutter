@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'core/tokens.dart';
+import 'data/repository.dart';
 import 'screens/splash_screen.dart';
 
 /// App-wide theme mode (toggled from Settings).
 final ValueNotifier<ThemeMode> themeMode = ValueNotifier(ThemeMode.system);
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await repo.restore();
   runApp(const MedFleetApp());
 }
 

@@ -16,13 +16,34 @@ class ReturnsScreen extends StatefulWidget {
 class _ReturnsScreenState extends State<ReturnsScreen> {
   List<ReturnRequest> _all = [];
   ReturnStatus _tab = ReturnStatus.pending;
+  bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    repo.returns().then((v) {
-      if (mounted) setState(() => _all = v);
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
     });
+    try {
+      final v = await repo.returns();
+      if (!mounted) return;
+      setState(() {
+        _all = v;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
   }
 
   static const _labels = {
@@ -62,6 +83,19 @@ class _ReturnsScreenState extends State<ReturnsScreen> {
                   ]),
                 ),
                 const SizedBox(height: 14),
+                if (_loading)
+                  const Padding(padding: EdgeInsets.all(40), child: Center(child: CircularProgressIndicator()))
+                else if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Center(child: GestureDetector(onTap: _load, child: Text(_error!, style: sans(14, c: p.red)))),
+                  )
+                else if (list.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(36),
+                    child: Center(child: Text('ماكو طلبات بهذا التبويب', style: sans(14, c: p.mute))),
+                  )
+                else
                 for (final r in list)
                   Container(
                     margin: const EdgeInsets.only(bottom: 12),

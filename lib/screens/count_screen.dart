@@ -19,7 +19,6 @@ class _CountScreenState extends State<CountScreen> {
   final _note = TextEditingController();
   List<Medicine> _meds = [];
   final List<CountLine> _lines = [];
-  int _scanCursor = 0;
   bool _posting = false;
 
   @override
@@ -27,7 +26,7 @@ class _CountScreenState extends State<CountScreen> {
     super.initState();
     repo.medicines().then((v) {
       if (mounted) setState(() => _meds = v);
-    });
+    }).catchError((_) {});
   }
 
   @override
@@ -50,19 +49,52 @@ class _CountScreenState extends State<CountScreen> {
     });
   }
 
-  // TODO(camera): replace with a real barcode scan (mobile_scanner) and look the code up via the API.
-  void _scan() {
-    if (_meds.isEmpty) return;
-    const order = [0, 2, 4, 1, 3];
-    final m = _meds[order[_scanCursor++ % order.length] % _meds.length];
-    _add(m);
-    showMfToast(context, 'تم مسح ${m.name}');
+  Future<void> _scan() async {
+    final code = await showMfSheet<String>(
+      context,
+      (c) {
+        final t = TextEditingController();
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text('بحث بالباركود', style: kufi(19, c: context.mf.ink)),
+          const SizedBox(height: 12),
+          TextField(
+            controller: t,
+            autofocus: true,
+            textDirection: TextDirection.ltr,
+            onSubmitted: (v) => Navigator.pop(c, v.trim()),
+            decoration: const InputDecoration(hintText: 'أدخل الباركود أو رقم الوجبة'),
+          ),
+          const SizedBox(height: 14),
+          PrimaryButton('بحث', onTap: () => Navigator.pop(c, t.text.trim())),
+        ]);
+      },
+    );
+    if (code == null || code.isEmpty) return;
+    try {
+      final m = await repo.findMedicine(code);
+      if (!mounted) return;
+      if (m == null) {
+        showMfToast(context, 'ما لقيت هذا الصنف بالمخزن');
+        return;
+      }
+      _add(m);
+      showMfToast(context, 'تمت إضافة ${m.name}');
+    } catch (e) {
+      if (!mounted) return;
+      showMfToast(context, e.toString());
+    }
   }
 
   List<Medicine> get _results {
     final q = _q.text.trim().toLowerCase();
     if (q.isEmpty) return [];
-    return _meds.where((m) => m.name.contains(q) || m.lot.toLowerCase().contains(q)).take(4).toList();
+    return _meds
+        .where((m) =>
+            m.name.contains(q) ||
+            m.lot.toLowerCase().contains(q) ||
+            m.barcode.toLowerCase().contains(q))
+        .take(4)
+        .toList();
   }
 
   Future<void> _post() async {
@@ -85,14 +117,20 @@ class _CountScreenState extends State<CountScreen> {
     );
     if (ok != true) return;
     setState(() => _posting = true);
-    await repo.postCount(_lines, _note.text.trim());
-    if (!mounted) return;
-    setState(() {
-      _posting = false;
-      _lines.clear();
-      _note.clear();
-    });
-    showMfToast(context, 'تم ترحيل الفرق للحسابات');
+    try {
+      await repo.postCount(_lines, _note.text.trim());
+      if (!mounted) return;
+      setState(() {
+        _posting = false;
+        _lines.clear();
+        _note.clear();
+      });
+      showMfToast(context, 'تم ترحيل الفرق للحسابات');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _posting = false);
+      showMfToast(context, e.toString());
+    }
   }
 
   @override

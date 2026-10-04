@@ -32,16 +32,33 @@ class _StockScreenState extends State<StockScreen> {
   List<Medicine> _all = [];
   MedStatus? _filter; // null = all
   bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    repo.medicines().then((v) {
-      if (mounted) setState(() {
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final v = await repo.medicines(q: _q.text.trim().isEmpty ? null : _q.text.trim());
+      if (!mounted) return;
+      setState(() {
         _all = v;
         _loading = false;
       });
-    });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
   }
 
   @override
@@ -54,7 +71,10 @@ class _StockScreenState extends State<StockScreen> {
     final q = _q.text.trim().toLowerCase();
     return _all.where((m) {
       if (_filter != null && m.status != _filter) return false;
-      return q.isEmpty || m.name.contains(q) || m.lot.toLowerCase().contains(q);
+      return q.isEmpty ||
+          m.name.contains(q) ||
+          m.lot.toLowerCase().contains(q) ||
+          m.barcode.toLowerCase().contains(q);
     }).toList();
   }
 
@@ -67,7 +87,7 @@ class _StockScreenState extends State<StockScreen> {
           const SizedBox(height: 14),
           KvGrid([
             ('الكمية', '${m.qty}'),
-            ('السعر (د.ع)', fmtNum(m.price)),
+            if (repo.user?.canSeePrices != false) ('السعر (د.ع)', fmtNum(m.price)),
             ('رقم الوجبة', m.lot),
             ('تاريخ الانتهاء', m.expiry),
           ]),
@@ -112,6 +132,13 @@ class _StockScreenState extends State<StockScreen> {
         const SizedBox(height: 8),
         if (_loading)
           const Padding(padding: EdgeInsets.all(40), child: Center(child: CircularProgressIndicator()))
+        else if (_error != null)
+          Padding(
+            padding: const EdgeInsets.all(36),
+            child: Center(
+              child: GestureDetector(onTap: _load, child: Text(_error!, style: sans(14, c: p.red))),
+            ),
+          )
         else if (list.isEmpty)
           Padding(padding: const EdgeInsets.all(36), child: Center(child: Text('ما لقيت نتيجة', style: sans(14, c: p.mute))))
         else

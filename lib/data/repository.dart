@@ -1,61 +1,242 @@
+import 'dart:convert';
+
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'api_client.dart';
 import 'models.dart';
 
-/// All server access goes through this interface.
-/// Replace [MockRepo] with a real implementation (Dio/http) when the API is ready.
 abstract class MedFleetRepo {
-  Future<bool> login(String username, String password);
-  Future<List<Medicine>> medicines();
+  MfUser? get user;
+  bool get hasSession;
+  String? get rememberedEmail;
+
+  Future<void> restore();
+  Future<bool> login(String username, String password, {bool remember = true});
+  Future<void> logout();
+
+  Future<List<Medicine>> medicines({String? q});
+  Future<Medicine?> findMedicine(String q);
   Future<List<ReturnRequest>> returns();
+  Future<HomeSnapshot> homeSnapshot();
 
-  /// Called after the camera decodes an invoice barcode/QR.
-  Future<ScannedInvoice> readInvoice(String code);
-  Future<void> confirmInvoice(String invoiceNo);
+  Future<List<ScannedInvoice>> recentScans();
+  Future<ScannedInvoice?> findScan(String code);
+  Future<ScannedInvoice> previewInvoicePhoto(List<int> jpeg);
+  Future<void> confirmInvoice(ScannedInvoice invoice);
 
-  /// Posts the stock-count differences to accounting.
   Future<void> postCount(List<CountLine> lines, String note);
 }
 
-MedFleetRepo repo = MockRepo();
+final ApiRepo repo = ApiRepo();
 
-class MockRepo implements MedFleetRepo {
-  static const _meds = <Medicine>[
-    Medicine(id: '1', name: 'باراسيتامول 500 ملغ', lot: 'B2209', expiry: '08/2027', qty: 240, daysLeft: 620, price: 1500),
-    Medicine(id: '2', name: 'أموكسيسيلين 250 ملغ', lot: 'A1187', expiry: '11/2026', qty: 36, daysLeft: 24, price: 4250),
-    Medicine(id: '3', name: 'أوميبرازول 20 ملغ', lot: 'C0412', expiry: '09/2027', qty: 112, daysLeft: 690, price: 3000),
-    Medicine(id: '4', name: 'إيبوبروفين 400 ملغ', lot: 'C5502', expiry: '11/2026', qty: 58, daysLeft: 41, price: 2000),
-    Medicine(id: '5', name: 'ميتفورمين 850 ملغ', lot: 'D3340', expiry: '02/2028', qty: 18, daysLeft: 880, price: 2750),
-    Medicine(id: '6', name: 'سيتريزين 10 ملغ', lot: '07731', expiry: '03/2026', qty: 9, daysLeft: -200, price: 1750),
-    Medicine(id: '7', name: 'فيتامين د3 1000 وحدة', lot: 'E7710', expiry: '06/2028', qty: 95, daysLeft: 980, price: 6500),
-    Medicine(id: '8', name: 'سالبيوتامول بخاخ', lot: 'F1029', expiry: '01/2027', qty: 7, daysLeft: 90, price: 5500),
-  ];
+class ApiRepo implements MedFleetRepo {
+  ApiRepo() {
+    _client.onUnauthorized = _clearLocal;
+  }
 
-  static const _returns = <ReturnRequest>[
-    ReturnRequest(id: 'RT-2041', supplier: 'شركة النور للأدوية', items: 6, value: 184500, status: ReturnStatus.pending),
-    ReturnRequest(id: 'RT-2038', supplier: 'مذخر الرافدين', items: 3, value: 92000, status: ReturnStatus.pending),
-    ReturnRequest(id: 'RT-2029', supplier: 'شركة دجلة الطبية', items: 11, value: 410750, status: ReturnStatus.pending),
-    ReturnRequest(id: 'RT-2011', supplier: 'شركة النور للأدوية', items: 4, value: 76000, status: ReturnStatus.approved),
-    ReturnRequest(id: 'RT-1996', supplier: 'مذخر بغداد', items: 2, value: 35500, status: ReturnStatus.rejected),
-  ];
+  final ApiClient _client = ApiClient();
+  SharedPreferences? _prefs;
+  MfUser? _user;
+  String? _rememberedEmail;
 
-  Future<T> _d<T>(T v, [int ms = 600]) => Future.delayed(Duration(milliseconds: ms), () => v);
+  static const _kToken = 'mf_token';
+  static const _kRefresh = 'mf_refresh';
+  static const _kUser = 'mf_user';
+  static const _kEmail = 'mf_email';
 
   @override
-  Future<bool> login(String u, String p) =>
-      _d(u.trim().toLowerCase() == 'bakr.amer' && p == '1234', 900);
+  MfUser? get user => _user;
 
   @override
-  Future<List<Medicine>> medicines() => _d(_meds, 200);
+  bool get hasSession => (_client.token ?? '').isNotEmpty && _user != null;
 
   @override
-  Future<List<ReturnRequest>> returns() => _d(_returns, 200);
+  String? get rememberedEmail => _rememberedEmail;
+
+  Future<SharedPreferences> get _store async => _prefs ??= await SharedPreferences.getInstance();
 
   @override
-  Future<ScannedInvoice> readInvoice(String code) => _d(
-      const ScannedInvoice(no: 'INV-13147', supplier: 'شركة النور للأدوية', items: 24, total: 1285000), 300);
+  Future<void> restore() async {
+    final p = await _store;
+    _client.token = p.getString(_kToken);
+    _client.refreshToken = p.getString(_kRefresh);
+    _rememberedEmail = p.getString(_kEmail);
+    final raw = p.getString(_kUser);
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final json = jsonDecode(raw);
+        if (json is Map<String, dynamic>) _user = MfUser.fromJson(json);
+      } catch (_) {}
+    }
+  }
 
   @override
-  Future<void> confirmInvoice(String invoiceNo) => _d(null, 700);
+  Future<bool> login(String username, String password, {bool remember = true}) async {
+    try {
+      final json = await _client.post(
+        'auth/login',
+        body: {'email': username.trim(), 'password': password},
+        auth: false,
+      );
+      final map = _asMap(json);
+      final data = map['data'] is Map<String, dynamic> ? map['data'] as Map<String, dynamic> : map;
+      final token = data['token']?.toString();
+      if (token == null || token.isEmpty) {
+        throw const ApiException('رد تسجيل الدخول ناقص');
+      }
+      final userJson = data['user'] is Map<String, dynamic> ? data['user'] as Map<String, dynamic> : <String, dynamic>{};
+      _client.token = token;
+      _client.refreshToken = data['refresh_token']?.toString();
+      _user = MfUser.fromJson(userJson);
+      final p = await _store;
+      await p.setString(_kToken, token);
+      await p.setString(_kRefresh, _client.refreshToken ?? '');
+      await p.setString(_kUser, jsonEncode(_user!.toJson()));
+      if (remember) {
+        _rememberedEmail = username.trim();
+        await p.setString(_kEmail, username.trim());
+      } else {
+        _rememberedEmail = null;
+        await p.remove(_kEmail);
+      }
+      return true;
+    } on ApiException catch (e) {
+      if (e.status == 401) return false;
+      rethrow;
+    }
+  }
 
   @override
-  Future<void> postCount(List<CountLine> lines, String note) => _d(null, 900);
+  Future<void> logout() async {
+    try {
+      if ((_client.token ?? '').isNotEmpty) {
+        await _client.post('auth/logout', body: <String, dynamic>{});
+      }
+    } catch (_) {}
+    await _clearLocal();
+  }
+
+  Future<void> _clearLocal() async {
+    _client.token = null;
+    _client.refreshToken = null;
+    _user = null;
+    final p = await _store;
+    await p.remove(_kToken);
+    await p.remove(_kRefresh);
+    await p.remove(_kUser);
+  }
+
+  @override
+  Future<List<Medicine>> medicines({String? q}) async {
+    final query = <String, String>{'limit': q == null || q.isEmpty ? '500' : '80'};
+    if (q != null && q.trim().isNotEmpty) query['q'] = q.trim();
+    final json = await _client.get('buyer/inventory', query: query);
+    return _listOf(json).map(Medicine.fromJson).toList();
+  }
+
+  @override
+  Future<Medicine?> findMedicine(String q) async {
+    final code = q.trim();
+    if (code.isEmpty) return null;
+    final list = await medicines(q: code);
+    if (list.isEmpty) return null;
+    return list.firstWhere(
+      (m) => m.barcode == code || m.lot == code || m.id == code,
+      orElse: () => list.first,
+    );
+  }
+
+  @override
+  Future<List<ReturnRequest>> returns() async {
+    final json = await _client.get('buyer/purchase-returns');
+    return _listOf(json).map(ReturnRequest.fromJson).toList();
+  }
+
+  @override
+  Future<HomeSnapshot> homeSnapshot() async {
+    final results = await Future.wait([medicines(), returns()]);
+    final meds = results[0] as List<Medicine>;
+    final rets = results[1] as List<ReturnRequest>;
+    return HomeSnapshot(
+      skuCount: meds.length,
+      soon: meds.where((m) => m.status == MedStatus.soon).length,
+      expired: meds.where((m) => m.status == MedStatus.expired).length,
+      pendingReturns: rets.where((r) => r.status == ReturnStatus.pending).length,
+    );
+  }
+
+  @override
+  Future<List<ScannedInvoice>> recentScans() async {
+    final json = await _client.get('buyer/scans');
+    return _listOf(json).map(ScannedInvoice.fromScanJson).toList();
+  }
+
+  @override
+  Future<ScannedInvoice?> findScan(String code) async {
+    final q = code.trim().toLowerCase();
+    if (q.isEmpty) return null;
+    final list = await recentScans();
+    for (final s in list) {
+      if (s.no.toLowerCase() == q) return s;
+    }
+    for (final s in list) {
+      if (s.no.toLowerCase().contains(q)) return s;
+    }
+    return null;
+  }
+
+  @override
+  Future<ScannedInvoice> previewInvoicePhoto(List<int> jpeg) async {
+    final json = await _client.uploadImages('buyer/scan/preview', [jpeg]);
+    final map = _asMap(json);
+    final data = map['data'] is Map<String, dynamic> ? map['data'] as Map<String, dynamic> : map;
+    return ScannedInvoice.fromPreview(data);
+  }
+
+  @override
+  Future<void> confirmInvoice(ScannedInvoice invoice) async {
+    if (invoice.alreadyOnServer) return;
+    if (invoice.extracted == null) {
+      throw const ApiException('ماكو بيانات مستخرجة حتى نعتمد الفاتورة');
+    }
+    await _client.post('buyer/scan/commit', body: {
+      if (invoice.imageUrl != null) 'image_url': invoice.imageUrl,
+      'extracted': invoice.extracted,
+    });
+  }
+
+  @override
+  Future<void> postCount(List<CountLine> lines, String note) async {
+    final payload = lines.map((l) {
+      return {
+        'product_id': l.med.id,
+        'product_name': l.med.name,
+        'barcode': l.med.barcode.isEmpty ? null : l.med.barcode,
+        'stock_qty': l.med.qty,
+        'current_qty': l.counted,
+        'diff_qty': l.diff,
+        'unit_cost': l.med.unitCost,
+        'diff_value': l.diff * l.med.unitCost,
+        'batch_number': l.med.lot == '—' ? null : l.med.lot,
+        'expiry_date': l.med.expiryRaw,
+      };
+    }).toList();
+    final total = payload.fold<double>(0, (a, e) => a + ((e['diff_value'] as num?)?.toDouble() ?? 0));
+    await _client.post('buyer/inventory/audit/commit', body: {
+      'lines': payload,
+      if (note.trim().isNotEmpty) 'note': note.trim(),
+      'total_diff_value': total,
+    });
+  }
+
+  Map<String, dynamic> _asMap(dynamic json) => json is Map<String, dynamic> ? json : <String, dynamic>{};
+
+  List<Map<String, dynamic>> _listOf(dynamic json) {
+    final map = _asMap(json);
+    final data = map['data'] ?? json;
+    if (data is List) {
+      return data.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+    }
+    return const [];
+  }
 }

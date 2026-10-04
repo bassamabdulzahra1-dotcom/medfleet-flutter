@@ -1,7 +1,9 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../core/tokens.dart';
+import '../data/repository.dart';
 import 'login_screen.dart';
+import 'shell.dart';
 
 /// Animated entry: tile pops in -> the "M" draws itself -> gold plus badge pops
 /// -> ripple rings -> wordmark + tagline fade up -> fades into [LoginScreen].
@@ -33,7 +35,8 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
       if (!mounted) return;
       Navigator.of(context).pushReplacement(PageRouteBuilder(
         transitionDuration: const Duration(milliseconds: 450),
-        pageBuilder: (ctx, _, __) => widget.next?.call(ctx) ?? const LoginScreen(),
+        pageBuilder: (ctx, _, __) =>
+            widget.next?.call(ctx) ?? (repo.hasSession ? const Shell() : const LoginScreen()),
         transitionsBuilder: (_, a, __, child) => FadeTransition(opacity: a, child: child),
       ));
     });

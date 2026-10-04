@@ -22,6 +22,13 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       AnimationController(vsync: this, duration: const Duration(milliseconds: 400));
 
   @override
+  void initState() {
+    super.initState();
+    final saved = repo.rememberedEmail;
+    if (saved != null && saved.isNotEmpty) _u.text = saved;
+  }
+
+  @override
   void dispose() {
     _u.dispose();
     _pw.dispose();
@@ -48,13 +55,19 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       _error = null;
       _badU = _badP = false;
     });
-    final ok = await repo.login(u, pw); // TODO(api): handle network errors
-    if (!mounted) return;
-    setState(() => _loading = false);
-    if (ok) {
-      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const Shell()));
-    } else {
-      _fail('اسم المستخدم أو كلمة المرور غير صحيحة', u: true, p: true);
+    try {
+      final ok = await repo.login(u, pw, remember: _remember);
+      if (!mounted) return;
+      setState(() => _loading = false);
+      if (ok) {
+        Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const Shell()));
+      } else {
+        _fail('اسم المستخدم أو كلمة المرور غير صحيحة', u: true, p: true);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      _fail(e.toString());
     }
   }
 
@@ -131,7 +144,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                       return Transform.translate(offset: Offset(dx, 0), child: child);
                     },
                     child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                      _field('اسم المستخدم', _u, 'user', bad: _badU, hint: 'bakr.amer'),
+                      _field('البريد أو اسم المستخدم', _u, 'user', bad: _badU, hint: 'name@medfleet.net'),
                       const SizedBox(height: 14),
                       _field('كلمة المرور', _pw, 'lock',
                           obscure: _hide,
@@ -170,19 +183,8 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                   ]),
                   const SizedBox(height: 14),
                   PrimaryButton('تسجيل الدخول', onTap: _submit, loading: _loading),
-                  const SizedBox(height: 14),
-                  Row(children: [
-                    Expanded(child: Divider(color: p.line)),
-                    Padding(padding: const EdgeInsets.symmetric(horizontal: 10), child: Text('أو', style: sans(12, c: p.mute))),
-                    Expanded(child: Divider(color: p.line)),
-                  ]),
-                  const SizedBox(height: 14),
-                  // TODO(biometric): wire up local_auth
-                  PrimaryButton('الدخول بالبصمة', ghost: true, icon: 'fp', onTap: () {
-                    Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const Shell()));
-                  }),
                   const SizedBox(height: 22),
-                  Center(child: Text('مدفليت · الإصدار 1.0', style: sans(12, c: p.mute))),
+                  Center(child: Text('مدفليت · الإصدار 1.2.0', style: sans(12, c: p.mute))),
                 ]),
               ),
             ),

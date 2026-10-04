@@ -66,6 +66,10 @@
 			<string>UIInterfaceOrientationLandscapeLeft</string>
 			<string>UIInterfaceOrientationLandscapeRight</string>
 		</array>
+		<key>NSCameraUsageDescription</key>
+		<string>لقراءة فاتورة الشراء وإدخالها للمخزن</string>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>لاختيار صورة فاتورة الشراء</string>
 		<key>UIStatusBarHidden</key>
 		<false/>
 	</dict>
